@@ -27,11 +27,10 @@ interface Settings {
 function App() {
   const [files, setFiles] = useState<FileTab[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>(null);
-  const [saveStatus, setSaveStatus] = useState<string>('');
   const [giteeConfig, setGiteeConfig] = useState<GiteeConfig | null>(null);
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
   const [settings, setSettings] = useState<Settings>({
-    autoSaveInterval: 10,
+    autoSaveInterval: 5,
     giteeConfig: null
   });
   const [giteeFormData, setGiteeFormData] = useState({
@@ -39,20 +38,30 @@ function App() {
     username: '',
     repo: ''
   });
-  const [lastSyncTime, setLastSyncTime] = useState<string>('');
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
   const [isPulling, setIsPulling] = useState(false);
-  const [isGiteeDialogOpen, setIsGiteeDialogOpen] = useState(false);
+  const [isPullConfirmOpen, setIsPullConfirmOpen] = useState(false);
   const [closedFiles, setClosedFiles] = useState<FileTab[]>([]);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [editingFileName, setEditingFileName] = useState<string >('');
+  const [editingFileId, setEditingFileId] = useState<string | null>(null);
+  const [pullSnackbarOpen, setPullSnackbarOpen] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState<string>('');
 
   // 从localStorage加载已关闭的文件
   useEffect(() => {
     const savedClosedFiles = localStorage.getItem('noteplus_closed_files');
     if (savedClosedFiles) {
-      setClosedFiles(JSON.parse(savedClosedFiles));
+      const parsedClosedFiles = JSON.parse(savedClosedFiles);
+      parsedClosedFiles.forEach((file: FileTab) => {
+        const content = localStorage.getItem(`noteplus_content_${file.id}`);
+        if (content !== null) {
+          file.content = content;
+        }
+      });
+      setClosedFiles(parsedClosedFiles);
     }
   }, []);
 
@@ -82,34 +91,49 @@ function App() {
       const updatedFileToClose = { ...fileToClose, lastModified: Date.now() };
       const updatedClosedFiles = [updatedFileToClose, ...closedFiles];
       setClosedFiles(updatedClosedFiles);
-      localStorage.setItem('noteplus_closed_files', JSON.stringify(updatedClosedFiles));
+      // 保存关闭文件的内容
+      localStorage.setItem(`noteplus_content_${fileId}`, fileToClose.content);
+      // 保存关闭文件的元数据，排除content字段
+      const closedMetadata = updatedClosedFiles.map(({ content, ...metadata }) => metadata);
+      localStorage.setItem('noteplus_closed_files', JSON.stringify(closedMetadata));
       
       const newFiles = files.filter(file => file.id !== fileId);
       setFiles(newFiles);
       if (activeTab === fileId && newFiles.length > 0) {
-        setActiveTab(newFiles[0].id);
+        // 选择最后一个标签页
+        setActiveTab(newFiles[newFiles.length - 1].id);
       }
     }
   };
 
   const handlePullFromGitee = async () => {
-    if (!giteeConfig || isPulling) return;
+    if (!giteeConfig) {
+      setIsSettingsDialogOpen(true);
+      return;
+    }
+    setIsPullConfirmOpen(true);
+  };
+
+  const executePullFromGitee = async () => {
+    if (isPulling || !giteeConfig) return;
     setIsPulling(true);
     setSyncMessage('');
+    setIsPullConfirmOpen(false);
+    setPullSnackbarOpen(true);
 
     try {
-      // 获取notes目录下的所有文件
       const response = await axios.get(
-        `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/notes`,
+        `https://gitee.com/api/v5/repos/${giteeConfig?.username}/${giteeConfig?.repo}/contents/notes`,
         {
           params: {
-            access_token: giteeConfig.accessToken,
+            access_token: giteeConfig?.accessToken,
             ref: 'main'
           }
         }
       );
 
-      const recoveredFiles: FileTab[] = [];
+      const openFiles: FileTab[] = [];
+      const closedFiles: FileTab[] = [];
 
       // 遍历并获取每个文件的内容
       for (const file of response.data) {
@@ -129,19 +153,42 @@ function App() {
             // 解码Base64内容
             const content = decodeURIComponent(escape(atob(fileContentResponse.data.content)));
             const fileData = JSON.parse(content);
-            recoveredFiles.push(fileData);
+            
+            // 立即存储文件内容到localStorage
+            localStorage.setItem(`noteplus_content_${fileData.id}`, fileData.content);
+            
+            // 根据文件类型分类
+            if (fileData.type === 'closed') {
+              closedFiles.push(fileData);
+              // 立即更新已关闭文件的元数据
+              const updatedClosedFiles = [...closedFiles];
+              const closedMetadata = updatedClosedFiles.map(({ content, ...metadata }) => metadata);
+              localStorage.setItem('noteplus_closed_files', JSON.stringify(closedMetadata));
+            } else {
+              openFiles.push(fileData);
+              // 立即更新打开文件的元数据
+              const updatedOpenFiles = [...openFiles];
+              const openMetadata = updatedOpenFiles.map(({ content, ...metadata }) => metadata);
+              localStorage.setItem('noteplus_files', JSON.stringify(openMetadata));
+            }
           } catch (error) {
             console.error(`Failed to fetch file ${file.name}:`, error);
           }
         }
       }
 
-      if (recoveredFiles.length > 0) {
-        setFiles(recoveredFiles);
-        setActiveTab(recoveredFiles[0].id);
-        localStorage.setItem('noteplus_files', JSON.stringify(recoveredFiles));
-        setSyncMessage(`从云端恢复成功，共恢复 ${recoveredFiles.length} 个文件`);
-
+      if (openFiles.length > 0 || closedFiles.length > 0) {
+        setFiles(openFiles);
+        setClosedFiles(closedFiles);
+        if (openFiles.length > 0) {
+          setActiveTab(openFiles[0].id);
+        }
+        // 保存文件元数据，排除content字段
+        const openMetadata = openFiles.map(({ content, ...metadata }) => metadata);
+        const closedMetadata = closedFiles.map(({ content, ...metadata }) => metadata);
+        localStorage.setItem('noteplus_files', JSON.stringify(openMetadata));
+        localStorage.setItem('noteplus_closed_files', JSON.stringify(closedMetadata));
+        setSyncMessage(`从云端恢复成功，共恢复 ${openFiles.length} 个打开的文件和 ${closedFiles.length} 个已关闭的文件`);
       } else {
         setSyncMessage('未找到可恢复的文件');
       }
@@ -150,6 +197,7 @@ function App() {
       setSyncMessage('从云端恢复失败，请检查网络或仓库权限');
     } finally {
       setIsPulling(false);
+      setPullSnackbarOpen(false);
     }
   };
 
@@ -163,12 +211,12 @@ function App() {
     try {
       const timestamp = new Date().toISOString();
       let successCount = 0;
+      const totalFiles = files.length + closedFiles.length;
 
-      // 为每个文件创建或更新备份
+      // 同步打开的文件
       for (const file of files) {
         const filePath = `notes/${file.id}.json`;
         try {
-          // 尝试获取现有文件的SHA
           const getFileResponse = await axios.get(
             `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/${filePath}`,
             {
@@ -179,11 +227,10 @@ function App() {
             }
           ).catch(() => null);
 
-          const content = JSON.stringify(file, null, 2);
+          const content = JSON.stringify({ ...file, type: 'open' }, null, 2);
           const base64Content = btoa(unescape(encodeURIComponent(content)));
 
           if (getFileResponse?.data?.sha) {
-            // 更新现有文件
             await axios.put(
               `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/${filePath}`,
               {
@@ -195,7 +242,6 @@ function App() {
               }
             );
           } else {
-            // 创建新文件
             await axios.post(
               `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/${filePath}`,
               {
@@ -212,14 +258,59 @@ function App() {
         }
       }
 
-      if (successCount === files.length) {
+      // 同步已关闭的文件
+      for (const file of closedFiles) {
+        const filePath = `notes/${file.id}.json`;
+        try {
+          const getFileResponse = await axios.get(
+            `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/${filePath}`,
+            {
+              params: {
+                access_token: giteeConfig.accessToken,
+                ref: 'main'
+              }
+            }
+          ).catch(() => null);
+
+          const content = JSON.stringify({ ...file, type: 'closed' }, null, 2);
+          const base64Content = btoa(unescape(encodeURIComponent(content)));
+
+          if (getFileResponse?.data?.sha) {
+            await axios.put(
+              `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/${filePath}`,
+              {
+                access_token: giteeConfig.accessToken,
+                content: base64Content,
+                message: `Update closed note: ${file.name} - ${timestamp}`,
+                sha: getFileResponse.data.sha,
+                branch: 'main'
+              }
+            );
+          } else {
+            await axios.post(
+              `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/${filePath}`,
+              {
+                access_token: giteeConfig.accessToken,
+                content: base64Content,
+                message: `Create closed note: ${file.name} - ${timestamp}`,
+                branch: 'main'
+              }
+            );
+          }
+          successCount++;
+        } catch (error) {
+          console.error(`Failed to sync closed file ${file.name}:`, error);
+        }
+      }
+
+      if (successCount === totalFiles) {
         const now = new Date().toLocaleString();
         setLastSyncTime(now);
         setSyncMessage('同步成功');
         // 将所有文件标记为已同步
         setFiles(files.map(file => ({ ...file, isDirty: false })));
       } else if (successCount > 0) {
-        setSyncMessage(`部分同步成功: ${successCount}/${files.length} 个文件已同步`);
+        setSyncMessage(`部分同步成功: ${successCount}/${totalFiles} 个文件已同步`);
       } else {
         setSyncMessage('同步失败');
       }
@@ -248,13 +339,19 @@ function App() {
     const savedFiles = localStorage.getItem('noteplus_files');
     const savedActiveTab = localStorage.getItem('noteplus_active_tab');
     const savedClosedFiles = localStorage.getItem('noteplus_closed_files');
-    const closedFileIds = savedClosedFiles ? new Set(JSON.parse(savedClosedFiles).map(file => file.id)) : new Set();
+    const closedFileIds = savedClosedFiles ? new Set(JSON.parse(savedClosedFiles).map((file: FileTab) => file.id)) : new Set();
 
     if (savedFiles) {
-      const parsedFiles = JSON.parse(savedFiles).filter(file => !closedFileIds.has(file.id));
+      const parsedFiles = JSON.parse(savedFiles).filter((file: FileTab) => !closedFileIds.has(file.id));
+      parsedFiles.forEach((file: FileTab) => {
+        const content = localStorage.getItem(`noteplus_content_${file.id}`);
+        if (content !== null) {
+          file.content = content;
+        }
+      });
       console.log('已加载的文件:', parsedFiles);
       setFiles(parsedFiles);
-      if (savedActiveTab && parsedFiles.some(file => file.id === savedActiveTab)) {
+      if (savedActiveTab && parsedFiles.some((file: FileTab) => file.id === savedActiveTab)) {
         setActiveTab(savedActiveTab);
         console.log('恢复活动标签为:', savedActiveTab);
       } else if (parsedFiles.length > 0) {
@@ -285,10 +382,14 @@ function App() {
 
   // 保存文件到localStorage
   const saveFiles = useCallback(() => {
-    localStorage.setItem('noteplus_files', JSON.stringify(files));
+    // 分别保存每个文件的内容
+    files.forEach(file => {
+      localStorage.setItem(`noteplus_content_${file.id}`, file.content);
+    });
+    // 保存文件元数据，不包含content
+    const metadataFiles = files.map(({ content, ...metadata }) => metadata);
+    localStorage.setItem('noteplus_files', JSON.stringify(metadataFiles));
     setFiles(files.map(file => ({ ...file, isDirty: false })));
-    setSaveStatus('已保存');
-    // console.log('文件保存完成');
   }, [files]);
 
 
@@ -369,12 +470,85 @@ function App() {
     setActiveTab(newFile.id);
   };
 
-  const handleTabChange = (event: React.SyntheticEvent, newValue: string) => {
+  const handleTabChange = (_event: React.SyntheticEvent, newValue: string) => {
     setActiveTab(newValue);
     localStorage.setItem('noteplus_active_tab', newValue);
   };
 
+  const handleFileNameDoubleClick = (fileId: string, fileName: string, event: React.MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setEditingFileId(fileId);
+    setEditingFileName(fileName);
+  };
+
+  const handleFileNameChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setEditingFileName(event.target.value);
+  };
+
+  const handleFileNameSave = () => {
+    if (editingFileId && editingFileName) {
+      setFiles(files.map(file => 
+        file.id === editingFileId ? { ...file, name: editingFileName } : file
+      ));
+      localStorage.setItem('noteplus_files', JSON.stringify(files.map(file => 
+        file.id === editingFileId ? { ...file, name: editingFileName } : file
+      )));
+    }
+    setEditingFileId(null);
+    setEditingFileName('');
+  };
+
+  const handleFileNameKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Enter') {
+      handleFileNameSave();
+    } else if (event.key === 'Escape') {
+      setEditingFileId(null);
+      setEditingFileName('');
+    }
+  };
+
   const currentFile = files.find(file => file.id === activeTab);
+
+  const renderWelcomePage = () => {
+    return (
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          height: '100%',
+          p: 3,
+          textAlign: 'center'
+        }}
+      >
+        <Typography variant="h4" gutterBottom>
+          欢迎使用 Note+
+        </Typography>
+        <Typography variant="subtitle1" color="text.secondary" sx={{ mb: 4 }}>
+          开始记录您的想法
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 2 }}>
+          <Button
+            variant="contained"
+            startIcon={<PullIcon />}
+            onClick={handlePullFromGitee}
+            disabled={isPulling}
+          >
+            从Gitee同步恢复
+          </Button>
+          <Button
+            variant="contained"
+            startIcon={<NoteAddIcon />}
+            onClick={createNewFile}
+          >
+            新建文件
+          </Button>
+        </Box>
+      </Box>
+    );
+  };
 
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -522,46 +696,60 @@ function App() {
               onChange={(e) => setSettings({ ...settings, autoSaveInterval: Number(e.target.value) })}
             />
           </Box>
-          <Box sx={{ mt: 3 }}>
-            <Typography variant="h6" gutterBottom>Gitee设置</Typography>
-            <TextField
-              margin="dense"
-              label="Access Token"
-              type="password"
-              fullWidth
-              value={giteeFormData.accessToken}
-              onChange={(e) => setGiteeFormData({ ...giteeFormData, accessToken: e.target.value })}
-            />
-            <TextField
-              margin="dense"
-              label="用户名"
-              fullWidth
-              value={giteeFormData.username}
-              onChange={(e) => setGiteeFormData({ ...giteeFormData, username: e.target.value })}
-            />
-            <TextField
-              margin="dense"
-              label="仓库名"
-              fullWidth
-              value={giteeFormData.repo}
-              onChange={(e) => setGiteeFormData({ ...giteeFormData, repo: e.target.value })}
-            />
-            <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
+            <Box>
+              <Typography variant="subtitle1" gutterBottom>Gitee 配置</Typography>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
+                <TextField
+                  label="访问令牌"
+                  value={giteeFormData.accessToken}
+                  onChange={(e) => setGiteeFormData({ ...giteeFormData, accessToken: e.target.value })}
+                  fullWidth
+                  size="small"
+                />
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => window.open('https://gitee.com/profile/personal_access_tokens/new', '_blank')}
+                >
+                  获取
+                </Button>
+              </Box>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+                请在Gitee个人访问令牌页面创建新的访问令牌。创建时请确保勾选 projects 权限。
+              </Typography>
+              <TextField
+                label="用户名"
+                value={giteeFormData.username}
+                onChange={(e) => setGiteeFormData({ ...giteeFormData, username: e.target.value })}
+                fullWidth
+                size="small"
+                sx={{ mb: 2 }}
+              />
+              <TextField
+                label="仓库名"
+                value={giteeFormData.repo}
+                onChange={(e) => setGiteeFormData({ ...giteeFormData, repo: e.target.value })}
+                fullWidth
+                size="small"
+                sx={{ mb: 2 }}
+              />
               <Button
-                variant="outlined"
-                onClick={handleManualSync}
-                disabled={!giteeConfig || isSyncing}
-                startIcon={<SyncIcon />}
+                variant="contained"
+                onClick={() => {
+                  const { accessToken, username, repo } = giteeFormData;
+                  if (!accessToken || !username || !repo) {
+                    setSyncMessage('请先填写完整的Gitee配置信息');
+                    return;
+                  }
+                  handleGiteeFormSubmit();
+                  handlePullFromGitee();
+                }}
+                disabled={isPulling}
+                startIcon={isPulling ? <CircularProgress size={20} color="inherit" /> : <PullIcon />}
+                fullWidth
               >
-                {isSyncing ? '同步中...' : '手动同步'}
-              </Button>
-              <Button
-                variant="outlined"
-                onClick={handlePullFromGitee}
-                disabled={!giteeConfig || isPulling}
-                startIcon={<PullIcon />}
-              >
-                {isPulling ? '恢复中...' : '从Gitee恢复'}
+                从Gitee同步恢复
               </Button>
             </Box>
           </Box>
@@ -579,34 +767,13 @@ function App() {
           scrollButtons="auto"
           sx={{
             minHeight: '32px',
-            position: 'relative',
             '& .MuiTabs-indicator': {
-              backgroundColor: '#1976d2',
               height: '2px'
             },
             '& .MuiTab-root': {
               minHeight: '32px',
-              padding: '4px 16px',
-              color: 'rgba(0, 0, 0, 0.7)',
-              '&.Mui-selected': {
-                color: '#1976d2',
-                backgroundColor: '#fff',
-                borderRadius: '4px 4px 0 0',
-                borderLeft: '1px solid #e0e0e0',
-                borderRight: '1px solid #e0e0e0',
-                borderTop: '1px solid #e0e0e0',
-                marginBottom: '-1px',
-                boxShadow: '0 -2px 4px rgba(0,0,0,0.03)'
-              }
-            },
-            '& .MuiTabScrollButton-root': {
-              width: '28px',
-              display: 'flex !important',
-              opacity: '1 !important',
-              visibility: 'visible !important',
-              '& svg': {
-                fontSize: '1.2rem'
-              }
+              padding: '4px 12px',
+              fontSize: '0.875rem'
             }
           }}
         >
@@ -627,7 +794,23 @@ function App() {
                       mr: 1
                     }}
                   />
-                  {file.name}
+                  {editingFileId === file.id ? (
+                    <input
+                      type="text"
+                      value={editingFileName}
+                      onChange={handleFileNameChange}
+                      onBlur={handleFileNameSave}
+                      onKeyPress={(e) => e.key === 'Enter' && handleFileNameSave()}
+                      autoFocus
+                    />
+                  ) : (
+                    <span
+                      onDoubleClick={(e) => handleFileNameDoubleClick(file.id, file.name, e)}
+                      style={{ cursor: 'text' }}
+                    >
+                      {file.name}
+                    </span>
+                  )}
                   <Box
                     component="span"
                     onClick={(e) => {
@@ -653,24 +836,28 @@ function App() {
         </Tabs>
       </Box>
       <Container disableGutters maxWidth={false} sx={{ height: 'calc(100vh - 112px)', width: '100%', p: 0 }}>
-        <Editor
-          height="100%"
-          width="100%"
-          defaultLanguage="plaintext"
-          value={currentFile?.content || ''}
-          onChange={handleEditorChange}
-          onMount={(editor) => {
-            console.log('编辑器挂载完成');
-            editor.onDidBlurEditorWidget(handleEditorBlur);
-          }}
-          theme="vs-dark"
-          options={{
-            minimap: { enabled: false },
-            fontSize: 14,
-            wordWrap: 'on',
-            automaticLayout: true
-          }}
-        />
+        {files.length === 0 ? (
+          renderWelcomePage()
+        ) : (
+          <Editor
+            height="100%"
+            width="100%"
+            defaultLanguage="plaintext"
+            value={currentFile?.content || ''}
+            onChange={handleEditorChange}
+            onMount={(editor) => {
+              console.log('编辑器挂载完成');
+              editor.onDidBlurEditorWidget(handleEditorBlur);
+            }}
+            theme="vs-dark"
+            options={{
+              minimap: { enabled: false },
+              fontSize: 14,
+              wordWrap: 'on',
+              automaticLayout: true
+            }}
+          />
+        )}
 
         {syncMessage && (
           <Snackbar
@@ -683,6 +870,36 @@ function App() {
           />
         )}
       </Container>
+      <Snackbar
+        open={pullSnackbarOpen}
+        message={
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <CircularProgress size={20} color="inherit" />
+            <span>正在从Gitee恢复...</span>
+          </Box>
+        }
+      />
+      <Dialog
+        open={isPullConfirmOpen}
+        onClose={() => setIsPullConfirmOpen(false)}
+        aria-labelledby="pull-confirm-dialog-title"
+        aria-describedby="pull-confirm-dialog-description"
+      >
+        <DialogTitle id="pull-confirm-dialog-title">
+          确认从Gitee同步恢复？
+        </DialogTitle>
+        <DialogContent>
+          <Typography id="pull-confirm-dialog-description">
+            此操作将从Gitee仓库恢复文件，这会覆盖当前所有本地文件。是否继续？
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setIsPullConfirmOpen(false)}>取消</Button>
+          <Button onClick={executePullFromGitee} color="primary" variant="contained">
+            确认恢复
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }
