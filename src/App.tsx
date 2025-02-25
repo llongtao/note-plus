@@ -46,6 +46,7 @@ function App() {
   const [isGiteeDialogOpen, setIsGiteeDialogOpen] = useState(false);
   const [closedFiles, setClosedFiles] = useState<FileTab[]>([]);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // 从localStorage加载已关闭的文件
   useEffect(() => {
@@ -77,9 +78,11 @@ function App() {
       if (fileToClose.isDirty) {
         saveFiles();
       }
-      // 将关闭的文件添加到已关闭列表
-      setClosedFiles([fileToClose, ...closedFiles.slice(0, 9)]); // 只保留最近10个
-      localStorage.setItem('noteplus_closed_files', JSON.stringify([fileToClose, ...closedFiles.slice(0, 9)]));
+      // 将关闭的文件添加到已关闭列表，更新最后修改时间
+      const updatedFileToClose = { ...fileToClose, lastModified: Date.now() };
+      const updatedClosedFiles = [updatedFileToClose, ...closedFiles];
+      setClosedFiles(updatedClosedFiles);
+      localStorage.setItem('noteplus_closed_files', JSON.stringify(updatedClosedFiles));
       
       const newFiles = files.filter(file => file.id !== fileId);
       setFiles(newFiles);
@@ -424,15 +427,44 @@ function App() {
               horizontal: 'right',
             }}
           >
-            {closedFiles.length > 0 ? (
-              closedFiles.map(file => (
-                <MenuItem key={file.id} onClick={() => reopenFile(file)}>
-                  {file.name}
-                </MenuItem>
-              ))
-            ) : (
-              <MenuItem disabled>没有最近关闭的文件</MenuItem>
-            )}
+            <Box sx={{ width: '300px', position: 'relative' }}>
+              <Box sx={{ 
+                position: 'sticky',
+                top: 0,
+                bgcolor: 'background.paper',
+                p: 2,
+                zIndex: 1,
+                borderBottom: 1,
+                borderColor: 'divider'
+              }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  placeholder="搜索文件..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </Box>
+              <Box sx={{ maxHeight: '400px', overflow: 'auto', p: 2 }}>
+                {closedFiles.length > 0 ? (
+                  [...closedFiles]
+                    .sort((a, b) => b.lastModified - a.lastModified)
+                    .filter(file => file.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                    .map(file => (
+                      <MenuItem key={file.id} onClick={() => reopenFile(file)}>
+                        <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                          <Typography>{file.name}</Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            {new Date(file.lastModified).toLocaleString()}
+                          </Typography>
+                        </Box>
+                      </MenuItem>
+                    ))
+                ) : (
+                  <MenuItem disabled>没有最近关闭的文件</MenuItem>
+                )}
+              </Box>
+            </Box>
           </Menu>
           <IconButton
             color="inherit"
