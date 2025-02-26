@@ -374,6 +374,7 @@ function App() {
         setSyncMessage('同步成功');
         // 将所有文件标记为已同步
         setFiles(files.map(file => ({ ...file, isDirty: false, isCloudDirty: false })));
+        setClosedFiles(closedFiles.map(file => ({ ...file, isDirty: false, isCloudDirty: false })));
       } else if (successCount > 0) {
         setSyncMessage(`部分同步成功: ${successCount}/${totalFiles} 个文件已同步`);
       } else {
