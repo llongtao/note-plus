@@ -12,6 +12,7 @@ interface FileTab {
   isDirty: boolean;
   isCloudDirty: boolean;
   lastModified: number;
+  fileSize: number;
 }
 
 interface GiteeConfig {
@@ -74,6 +75,32 @@ function App() {
     setAnchorEl(null);
   };
 
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [fileToDelete, setFileToDelete] = useState<string | null>(null);
+
+  const handleDeleteClosedFile = (fileId: string) => {
+    setFileToDelete(fileId);
+    setDeleteConfirmOpen(true);
+  };
+
+  const handleConfirmDelete = () => {
+    if (fileToDelete) {
+      const updatedClosedFiles = closedFiles.filter(f => f.id !== fileToDelete);
+      // 先更新本地存储
+      localStorage.removeItem(`noteplus_content_${fileToDelete}`);
+      localStorage.setItem('noteplus_closed_files', JSON.stringify(updatedClosedFiles));
+      // 再更新状态
+      setClosedFiles(updatedClosedFiles);
+      setDeleteConfirmOpen(false);
+      setFileToDelete(null);
+    }
+  };
+
+  const handleCancelDelete = () => {
+    setDeleteConfirmOpen(false);
+    setFileToDelete(null);
+  };
+
   const reopenFile = (file: FileTab) => {
     setFiles([...files, file]);
     setActiveTab(file.id);
@@ -82,14 +109,28 @@ function App() {
     handleCloseMenu();
   };
 
+  const formatFileSize = (size: number) => {
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  const formatLastModified = (timestamp: number) => {
+    return new Date(timestamp).toLocaleString();
+  };
+
   const closeFile = (fileId: string) => {
     const fileToClose = files.find(file => file.id === fileId);
     if (fileToClose) {
       if (fileToClose.isDirty) {
         saveFiles();
       }
-      // 将关闭的文件添加到已关闭列表，更新最后修改时间
-      const updatedFileToClose = { ...fileToClose, lastModified: Date.now() };
+      // 将关闭的文件添加到已关闭列表，更新最后修改时间和文件大小
+      const updatedFileToClose = { 
+        ...fileToClose, 
+        lastModified: Date.now(),
+        fileSize: new Blob([fileToClose.content]).size
+      };
       const updatedClosedFiles = [updatedFileToClose, ...closedFiles];
       setClosedFiles(updatedClosedFiles);
       // 保存关闭文件的内容
@@ -99,6 +140,10 @@ function App() {
       localStorage.setItem('noteplus_closed_files', JSON.stringify(closedMetadata));
       
       const newFiles = files.filter(file => file.id !== fileId);
+      // 立即更新noteplus_files的本地存储
+      const newFilesMetadata = newFiles.map(({ content, ...metadata }) => metadata);
+      localStorage.setItem('noteplus_files', JSON.stringify(newFilesMetadata));
+      
       setFiles(newFiles);
       if (activeTab === fileId && newFiles.length > 0) {
         // 选择最后一个标签页
@@ -480,6 +525,7 @@ function App() {
       name: `未命名-${newNumber}`,
       content: '',
       isDirty: true,
+      fileSize: 0,
       isCloudDirty: true,
       lastModified: Date.now()
     };
@@ -609,53 +655,48 @@ function App() {
             anchorEl={anchorEl}
             open={Boolean(anchorEl)}
             onClose={handleCloseMenu}
-            anchorOrigin={{
-              vertical: 'bottom',
-              horizontal: 'right',
-            }}
-            transformOrigin={{
-              vertical: 'top',
-              horizontal: 'right',
+            sx={{
+              '& .MuiPaper-root': {
+                minWidth: '400px',
+                maxHeight: '80vh'
+              }
             }}
           >
-            <Box sx={{ width: '300px', position: 'relative' }}>
-              <Box sx={{ 
-                position: 'sticky',
-                top: 0,
-                bgcolor: 'background.paper',
-                p: 2,
-                zIndex: 1,
-                borderBottom: 1,
-                borderColor: 'divider'
-              }}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  placeholder="搜索文件..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
-              </Box>
-              <Box sx={{ maxHeight: '400px', overflow: 'auto', p: 2 }}>
-                {closedFiles.length > 0 ? (
-                  [...closedFiles]
-                    .sort((a, b) => b.lastModified - a.lastModified)
-                    .filter(file => file.name.toLowerCase().includes(searchQuery.toLowerCase()))
-                    .map(file => (
-                      <MenuItem key={file.id} onClick={() => reopenFile(file)}>
-                        <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-                          <Typography>{file.name}</Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {new Date(file.lastModified).toLocaleString()}
-                          </Typography>
-                        </Box>
-                      </MenuItem>
-                    ))
-                ) : (
-                  <MenuItem disabled>没有最近关闭的文件</MenuItem>
-                )}
-              </Box>
-            </Box>
+            <MenuItem sx={{ p: 2, flexDirection: 'column', alignItems: 'stretch' }}>
+              <TextField
+                size="small"
+                placeholder="搜索已关闭的文件..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                sx={{ mb: 2 }}
+                fullWidth
+              />
+              {closedFiles
+                .filter(file => file.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                .map(file => (
+                <Box
+                  key={file.id}
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    py: 1,
+                    borderBottom: '1px solid rgba(0, 0, 0, 0.12)'
+                  }}
+                >
+                  <Box sx={{ flex: 1, minWidth: 0, mr: 2 }}>
+                    <Typography noWrap title={file.name}>{file.name}</Typography>
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      {formatFileSize(file.fileSize)} · {formatLastModified(file.lastModified)}
+                    </Typography>
+                  </Box>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Button size="small" onClick={() => reopenFile(file)}>打开</Button>
+                    <Button size="small" color="error" onClick={() => handleDeleteClosedFile(file.id)}>删除</Button>
+                  </Box>
+                </Box>
+              ))}
+            </MenuItem>
           </Menu>
           <IconButton
             color="inherit"
@@ -897,6 +938,24 @@ function App() {
           </Box>
         }
       />
+      <Dialog
+        open={deleteConfirmOpen}
+        onClose={handleCancelDelete}
+        aria-labelledby="delete-confirm-dialog-title"
+        aria-describedby="delete-confirm-dialog-description"
+      >
+        <DialogTitle id="delete-confirm-dialog-title">确认删除</DialogTitle>
+        <DialogContent>
+          <Typography>确定要删除这个文件吗？此操作无法撤销。</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCancelDelete}>取消</Button>
+          <Button onClick={handleConfirmDelete} color="error" autoFocus>
+            删除
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       <Dialog
         open={isPullConfirmOpen}
         onClose={() => setIsPullConfirmOpen(false)}
