@@ -102,10 +102,15 @@ function App() {
   };
 
   const reopenFile = (file: FileTab) => {
-    setFiles([...files, file]);
+    const newFiles =  [...files, file]
+    const newClosedFiles = closedFiles.filter(f => f.id !== file.id)
+    setFiles(newFiles);
     setActiveTab(file.id);
-    setClosedFiles(closedFiles.filter(f => f.id !== file.id));
-    localStorage.setItem('noteplus_closed_files', JSON.stringify(closedFiles.filter(f => f.id !== file.id)));
+    setClosedFiles(newClosedFiles);
+    const newClosedFilesMetadata = newClosedFiles.map(({ content, ...metadata }) => metadata);
+    localStorage.setItem('noteplus_closed_files', JSON.stringify(newClosedFilesMetadata));
+    const newFilesMetadata = newFiles.map(({ content, ...metadata }) => metadata);
+    localStorage.setItem('noteplus_files', JSON.stringify(newFilesMetadata));
     handleCloseMenu();
   };
 
@@ -340,7 +345,7 @@ function App() {
               `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/${filePath}`,
               {
                 access_token: giteeConfig.accessToken,
-                content: base64Content,
+                content: base64Content||'',
                 message: `Update content: ${file.name} - ${timestamp}`,
                 sha: getFileResponse.data.sha,
                 branch: 'main'
@@ -351,7 +356,7 @@ function App() {
               `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/${filePath}`,
               {
                 access_token: giteeConfig.accessToken,
-                content: base64Content,
+                content: base64Content||'',
                 message: `Create content: ${file.name} - ${timestamp}`,
                 branch: 'main'
               }
@@ -716,9 +721,9 @@ function App() {
                 borderRadius: '50%',
                 backgroundColor: isSyncing ? '#1976d2' :
                   !giteeConfig ? '#bdbdbd' :
-                    files.some(f => f.isCloudDirty) ? '#ffc107' :
+                    files.some(f => f.isCloudDirty)||closedFiles.some(f => f.isCloudDirty) ? '#ffc107' :
                       syncMessage?.includes('失败') ? '#f44336' :
-                        lastSyncTime && !files.some(f => f.lastModified > new Date(lastSyncTime).getTime()) ? '#4caf50' : '#ffc107',
+                        lastSyncTime && !files.some(f => f.lastModified > new Date(lastSyncTime).getTime())&& !closedFiles.some(f => f.lastModified > new Date(lastSyncTime).getTime()) ? '#4caf50' : '#ffc107',
               }}
             />
           </IconButton>
