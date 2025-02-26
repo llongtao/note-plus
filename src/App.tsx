@@ -10,6 +10,7 @@ interface FileTab {
   name: string;
   content: string;
   isDirty: boolean;
+  isCloudDirty: boolean;
   lastModified: number;
 }
 
@@ -122,70 +123,80 @@ function App() {
     setPullSnackbarOpen(true);
 
     try {
-      const response = await axios.get(
-        `https://gitee.com/api/v5/repos/${giteeConfig?.username}/${giteeConfig?.repo}/contents/notes`,
+      // 获取metadata.json文件
+      const metadataResponse = await axios.get(
+        `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/notes/metadata.json`,
         {
           params: {
-            access_token: giteeConfig?.accessToken,
+            access_token: giteeConfig.accessToken,
             ref: 'main'
           }
         }
       );
 
+      // 解码metadata内容
+      const metadataContent = decodeURIComponent(escape(atob(metadataResponse.data.content)));
+      const metadata = JSON.parse(metadataContent);
+
       const openFiles: FileTab[] = [];
       const closedFiles: FileTab[] = [];
 
-      // 遍历并获取每个文件的内容
-      for (const file of response.data) {
-        if (file.type === 'file' && file.name.endsWith('.json')) {
-          try {
-            // 使用contents API获取文件内容
-            const fileContentResponse = await axios.get(
-              `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/notes/${file.name}`,
-              {
-                params: {
-                  access_token: giteeConfig.accessToken,
-                  ref: 'main'
-                }
+      // 处理打开的文件
+      for (const fileMetadata of metadata.openFiles) {
+        try {
+          const contentResponse = await axios.get(
+            `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/notes/content/${fileMetadata.id}.txt`,
+            {
+              params: {
+                access_token: giteeConfig.accessToken,
+                ref: 'main'
               }
-            );
-
-            // 解码Base64内容
-            const content = decodeURIComponent(escape(atob(fileContentResponse.data.content)));
-            const fileData = JSON.parse(content);
-            
-            // 立即存储文件内容到localStorage
-            localStorage.setItem(`noteplus_content_${fileData.id}`, fileData.content);
-            
-            // 根据文件类型分类
-            if (fileData.type === 'closed') {
-              closedFiles.push(fileData);
-              // 立即更新已关闭文件的元数据
-              const updatedClosedFiles = [...closedFiles];
-              const closedMetadata = updatedClosedFiles.map(({ content, ...metadata }) => metadata);
-              localStorage.setItem('noteplus_closed_files', JSON.stringify(closedMetadata));
-            } else {
-              openFiles.push(fileData);
-              // 立即更新打开文件的元数据
-              const updatedOpenFiles = [...openFiles];
-              const openMetadata = updatedOpenFiles.map(({ content, ...metadata }) => metadata);
-              localStorage.setItem('noteplus_files', JSON.stringify(openMetadata));
             }
-          } catch (error) {
-            console.error(`Failed to fetch file ${file.name}:`, error);
-          }
+          );
+
+          const content = decodeURIComponent(escape(atob(contentResponse.data.content)));
+          const fileData = { ...fileMetadata, content };
+          openFiles.push(fileData);
+          localStorage.setItem(`noteplus_content_${fileData.id}`, content);
+        } catch (error) {
+          console.error(`Failed to fetch content for file ${fileMetadata.id}:`, error);
+        }
+      }
+
+      // 处理已关闭的文件
+      for (const fileMetadata of metadata.closedFiles) {
+        try {
+          const contentResponse = await axios.get(
+            `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/notes/content/${fileMetadata.id}.txt`,
+            {
+              params: {
+                access_token: giteeConfig.accessToken,
+                ref: 'main'
+              }
+            }
+          );
+
+          const content = decodeURIComponent(escape(atob(contentResponse.data.content)));
+          const fileData = { ...fileMetadata, content };
+          closedFiles.push(fileData);
+          localStorage.setItem(`noteplus_content_${fileData.id}`, content);
+        } catch (error) {
+          console.error(`Failed to fetch content for file ${fileMetadata.id}:`, error);
         }
       }
 
       if (openFiles.length > 0 || closedFiles.length > 0) {
-        setFiles(openFiles);
-        setClosedFiles(closedFiles);
-        if (openFiles.length > 0) {
-          setActiveTab(openFiles[0].id);
-        }
+        // 将所有文件标记为已同步
+        const markedOpenFiles = openFiles.map(file => ({ ...file, isCloudDirty: false, isDirty: false }));
+        const markedClosedFiles = closedFiles.map(file => ({ ...file, isCloudDirty: false, isDirty: false }));
+        setFiles(markedOpenFiles);
+        setClosedFiles(markedClosedFiles);
+        const now = new Date().toLocaleString();
+        setLastSyncTime(now);
+
         // 保存文件元数据，排除content字段
-        const openMetadata = openFiles.map(({ content, ...metadata }) => metadata);
-        const closedMetadata = closedFiles.map(({ content, ...metadata }) => metadata);
+        const openMetadata = markedOpenFiles.map(({ content, ...metadata }) => metadata);
+        const closedMetadata = markedClosedFiles.map(({ content, ...metadata }) => metadata);
         localStorage.setItem('noteplus_files', JSON.stringify(openMetadata));
         localStorage.setItem('noteplus_closed_files', JSON.stringify(closedMetadata));
         setSyncMessage(`从云端恢复成功，共恢复 ${openFiles.length} 个打开的文件和 ${closedFiles.length} 个已关闭的文件`);
@@ -213,9 +224,59 @@ function App() {
       let successCount = 0;
       const totalFiles = files.length + closedFiles.length;
 
-      // 同步打开的文件
-      for (const file of files) {
-        const filePath = `notes/${file.id}.json`;
+      // 准备元数据列表
+      const metadata = {
+        openFiles: files.map(({ content, ...metadata }) => ({ ...metadata, type: 'open' })),
+        closedFiles: closedFiles.map(({ content, ...metadata }) => ({ ...metadata, type: 'closed' }))
+      };
+
+      // 同步元数据文件
+      try {
+        const metadataPath = 'notes/metadata.json';
+        const metadataContent = JSON.stringify(metadata, null, 2);
+        const metadataBase64 = btoa(unescape(encodeURIComponent(metadataContent)));
+
+        const getMetadataResponse = await axios.get(
+          `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/${metadataPath}`,
+          {
+            params: {
+              access_token: giteeConfig.accessToken,
+              ref: 'main'
+            }
+          }
+        ).catch(() => null);
+
+        if (getMetadataResponse?.data?.sha) {
+          await axios.put(
+            `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/${metadataPath}`,
+            {
+              access_token: giteeConfig.accessToken,
+              content: metadataBase64,
+              message: `Update metadata - ${timestamp}`,
+              sha: getMetadataResponse.data.sha,
+              branch: 'main'
+            }
+          );
+        } else {
+          await axios.post(
+            `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/${metadataPath}`,
+            {
+              access_token: giteeConfig.accessToken,
+              content: metadataBase64,
+              message: `Create metadata - ${timestamp}`,
+              branch: 'main'
+            }
+          );
+        }
+      } catch (error) {
+        console.error('Failed to sync metadata:', error);
+        throw error;
+      }
+
+      // 同步文件内容
+      const allFiles = [...files, ...closedFiles];
+      for (const file of allFiles) {
+        const filePath = `notes/content/${file.id}.txt`;
         try {
           const getFileResponse = await axios.get(
             `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/${filePath}`,
@@ -227,8 +288,7 @@ function App() {
             }
           ).catch(() => null);
 
-          const content = JSON.stringify({ ...file, type: 'open' }, null, 2);
-          const base64Content = btoa(unescape(encodeURIComponent(content)));
+          const base64Content = btoa(unescape(encodeURIComponent(file.content)));
 
           if (getFileResponse?.data?.sha) {
             await axios.put(
@@ -236,7 +296,7 @@ function App() {
               {
                 access_token: giteeConfig.accessToken,
                 content: base64Content,
-                message: `Update note: ${file.name} - ${timestamp}`,
+                message: `Update content: ${file.name} - ${timestamp}`,
                 sha: getFileResponse.data.sha,
                 branch: 'main'
               }
@@ -247,7 +307,7 @@ function App() {
               {
                 access_token: giteeConfig.accessToken,
                 content: base64Content,
-                message: `Create note: ${file.name} - ${timestamp}`,
+                message: `Create content: ${file.name} - ${timestamp}`,
                 branch: 'main'
               }
             );
@@ -258,57 +318,12 @@ function App() {
         }
       }
 
-      // 同步已关闭的文件
-      for (const file of closedFiles) {
-        const filePath = `notes/${file.id}.json`;
-        try {
-          const getFileResponse = await axios.get(
-            `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/${filePath}`,
-            {
-              params: {
-                access_token: giteeConfig.accessToken,
-                ref: 'main'
-              }
-            }
-          ).catch(() => null);
-
-          const content = JSON.stringify({ ...file, type: 'closed' }, null, 2);
-          const base64Content = btoa(unescape(encodeURIComponent(content)));
-
-          if (getFileResponse?.data?.sha) {
-            await axios.put(
-              `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/${filePath}`,
-              {
-                access_token: giteeConfig.accessToken,
-                content: base64Content,
-                message: `Update closed note: ${file.name} - ${timestamp}`,
-                sha: getFileResponse.data.sha,
-                branch: 'main'
-              }
-            );
-          } else {
-            await axios.post(
-              `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/${filePath}`,
-              {
-                access_token: giteeConfig.accessToken,
-                content: base64Content,
-                message: `Create closed note: ${file.name} - ${timestamp}`,
-                branch: 'main'
-              }
-            );
-          }
-          successCount++;
-        } catch (error) {
-          console.error(`Failed to sync closed file ${file.name}:`, error);
-        }
-      }
-
       if (successCount === totalFiles) {
         const now = new Date().toLocaleString();
         setLastSyncTime(now);
         setSyncMessage('同步成功');
         // 将所有文件标记为已同步
-        setFiles(files.map(file => ({ ...file, isDirty: false })));
+        setFiles(files.map(file => ({ ...file, isDirty: false, isCloudDirty: false })));
       } else if (successCount > 0) {
         setSyncMessage(`部分同步成功: ${successCount}/${totalFiles} 个文件已同步`);
       } else {
@@ -389,6 +404,7 @@ function App() {
     // 保存文件元数据，不包含content
     const metadataFiles = files.map(({ content, ...metadata }) => metadata);
     localStorage.setItem('noteplus_files', JSON.stringify(metadataFiles));
+    // 只更新isDirty状态，保持isCloudDirty状态不变
     setFiles(files.map(file => ({ ...file, isDirty: false })));
   }, [files]);
 
@@ -438,7 +454,7 @@ function App() {
     if (value !== undefined && activeTab) {
       // console.log('更新文件内容，标记为已修改');
       setFiles(files.map(file =>
-        file.id === activeTab ? { ...file, content: value, isDirty: true } : file
+        file.id === activeTab ? { ...file, content: value, isDirty: true, isCloudDirty: true } : file
       ));
     }
   };
@@ -463,7 +479,8 @@ function App() {
       id: `file_${Date.now()}`,
       name: `未命名-${newNumber}`,
       content: '',
-      isDirty: false,
+      isDirty: true,
+      isCloudDirty: true,
       lastModified: Date.now()
     };
     setFiles([...files, newFile]);
@@ -658,8 +675,9 @@ function App() {
                 borderRadius: '50%',
                 backgroundColor: isSyncing ? '#1976d2' :
                   !giteeConfig ? '#bdbdbd' :
-                    files.some(f => f.isDirty) ? '#ffc107' :
-                      syncMessage?.includes('失败') ? '#f44336' : '#4caf50',
+                    files.some(f => f.isCloudDirty) ? '#ffc107' :
+                      syncMessage?.includes('失败') ? '#f44336' :
+                        lastSyncTime && !files.some(f => f.lastModified > new Date(lastSyncTime).getTime()) ? '#4caf50' : '#ffc107',
               }}
             />
           </IconButton>
