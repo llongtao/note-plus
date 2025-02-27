@@ -807,6 +807,7 @@ function App() {
                   onChange={(e) => setGiteeFormData({ ...giteeFormData, accessToken: e.target.value })}
                   fullWidth
                   size="small"
+                  type='password'
                 />
                 <Button
                   variant="outlined"
