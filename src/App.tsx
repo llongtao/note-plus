@@ -23,6 +23,7 @@ interface GiteeConfig {
 
 interface Settings {
   autoSaveInterval: number;
+  autoSyncInterval: number; // 添加自动同步间隔配置
   giteeConfig: GiteeConfig | null;
 }
 
@@ -33,6 +34,7 @@ function App() {
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
   const [settings, setSettings] = useState<Settings>({
     autoSaveInterval: 5,
+    autoSyncInterval: 0, // 默认关闭自动同步
     giteeConfig: null
   });
   const [giteeFormData, setGiteeFormData] = useState({
@@ -47,10 +49,13 @@ function App() {
   const [closedFiles, setClosedFiles] = useState<FileTab[]>([]);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [editingFileName, setEditingFileName] = useState<string >('');
+  const [editingFileName, setEditingFileName] = useState<string>('');
   const [editingFileId, setEditingFileId] = useState<string | null>(null);
   const [pullSnackbarOpen, setPullSnackbarOpen] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<string>('');
+
+
+
 
   // 从localStorage加载已关闭的文件
   useEffect(() => {
@@ -102,7 +107,7 @@ function App() {
   };
 
   const reopenFile = (file: FileTab) => {
-    const newFiles =  [...files, file]
+    const newFiles = [...files, file]
     const newClosedFiles = closedFiles.filter(f => f.id !== file.id)
     setFiles(newFiles);
     setActiveTab(file.id);
@@ -131,8 +136,8 @@ function App() {
         saveFiles();
       }
       // 将关闭的文件添加到已关闭列表，更新最后修改时间和文件大小
-      const updatedFileToClose = { 
-        ...fileToClose, 
+      const updatedFileToClose = {
+        ...fileToClose,
         lastModified: Date.now(),
         fileSize: new Blob([fileToClose.content]).size
       };
@@ -143,12 +148,12 @@ function App() {
       // 保存关闭文件的元数据，排除content字段
       const closedMetadata = updatedClosedFiles.map(({ content, ...metadata }) => metadata);
       localStorage.setItem('noteplus_closed_files', JSON.stringify(closedMetadata));
-      
+
       const newFiles = files.filter(file => file.id !== fileId);
       // 立即更新noteplus_files的本地存储
       const newFilesMetadata = newFiles.map(({ content, ...metadata }) => metadata);
       localStorage.setItem('noteplus_files', JSON.stringify(newFilesMetadata));
-      
+
       setFiles(newFiles);
       if (activeTab === fileId && newFiles.length > 0) {
         // 选择最后一个标签页
@@ -345,7 +350,7 @@ function App() {
               `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/${filePath}`,
               {
                 access_token: giteeConfig.accessToken,
-                content: base64Content||'',
+                content: base64Content || '',
                 message: `Update content: ${file.name} - ${timestamp}`,
                 sha: getFileResponse.data.sha,
                 branch: 'main'
@@ -356,7 +361,7 @@ function App() {
               `https://gitee.com/api/v5/repos/${giteeConfig.username}/${giteeConfig.repo}/contents/${filePath}`,
               {
                 access_token: giteeConfig.accessToken,
-                content: base64Content||'',
+                content: base64Content || '',
                 message: `Create content: ${file.name} - ${timestamp}`,
                 branch: 'main'
               }
@@ -466,14 +471,14 @@ function App() {
 
   // 定时自动保存
   useEffect(() => {
-    
+
     if (settings.autoSaveInterval > 0) {
 
       const timer = setInterval(() => {
-      
+
         const hasUnsavedChanges = files.some(file => file.isDirty);
         if (hasUnsavedChanges) {
-          
+
           console.log('检测到未保存的更改，执行自动保存');
           saveFiles();
         }
@@ -484,6 +489,25 @@ function App() {
       };
     }
   }, [settings.autoSaveInterval, files, saveFiles]);
+
+
+  // 定时自动同步到云端
+  useEffect(() => {
+    if (settings.autoSyncInterval > 0 && giteeConfig) {
+      const timer = setInterval(() => {
+        const hasCloudDirtyFiles = files.some(file => file.isCloudDirty);
+        if (hasCloudDirtyFiles) {
+          console.log('检测到需要同步的更改，执行自动同步');
+          handleManualSync();
+        }
+      }, settings.autoSyncInterval * 60 * 1000);
+
+      return () => {
+        clearInterval(timer);
+      };
+    }
+  }, [settings.autoSyncInterval, files, giteeConfig, handleManualSync]);
+
 
   // const handleEditorBlur = useCallback(() => {
   //   console.log('编辑器失焦事件监听器触发');
@@ -519,13 +543,13 @@ function App() {
           return match ? parseInt(match[1]) : 0;
         })
     );
-  
+
     // 找到最小的未使用序号
     let newNumber = 1;
     while (usedNumbers.has(newNumber)) {
       newNumber++;
     }
-  
+
     const newFile: FileTab = {
       id: `file_${Date.now()}`,
       name: `未命名-${newNumber}`,
@@ -557,10 +581,10 @@ function App() {
 
   const handleFileNameSave = () => {
     if (editingFileId && editingFileName) {
-      setFiles(files.map(file => 
+      setFiles(files.map(file =>
         file.id === editingFileId ? { ...file, name: editingFileName } : file
       ));
-      localStorage.setItem('noteplus_files', JSON.stringify(files.map(file => 
+      localStorage.setItem('noteplus_files', JSON.stringify(files.map(file =>
         file.id === editingFileId ? { ...file, name: editingFileName } : file
       )));
     }
@@ -605,7 +629,7 @@ function App() {
             onClick={handlePullFromGitee}
             disabled={isPulling}
           >
-            从Gitee同步恢复
+            从Gitee恢复
           </Button>
           <Button
             variant="contained"
@@ -629,8 +653,8 @@ function App() {
           <IconButton color="inherit" title="未命名" onClick={createNewFile}>
             <NoteAddIcon />
           </IconButton>
-          <IconButton 
-            color="inherit" 
+          <IconButton
+            color="inherit"
             title="打开文件"
             onClick={handleOpenMenuClick}
             sx={{ position: 'relative' }}
@@ -680,28 +704,28 @@ function App() {
               {closedFiles
                 .filter(file => file.name.toLowerCase().includes(searchQuery.toLowerCase()))
                 .map(file => (
-                <Box
-                  key={file.id}
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    py: 1,
-                    borderBottom: '1px solid rgba(0, 0, 0, 0.12)'
-                  }}
-                >
-                  <Box sx={{ flex: 1, minWidth: 0, mr: 2 }}>
-                    <Typography noWrap title={file.name}>{file.name}</Typography>
-                    <Typography variant="caption" color="text.secondary" display="block">
-                      {formatFileSize(file.fileSize)} · {formatLastModified(file.lastModified)}
-                    </Typography>
+                  <Box
+                    key={file.id}
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      py: 1,
+                      borderBottom: '1px solid rgba(0, 0, 0, 0.12)'
+                    }}
+                  >
+                    <Box sx={{ flex: 1, minWidth: 0, mr: 2 }}>
+                      <Typography noWrap title={file.name}>{file.name}</Typography>
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        {formatFileSize(file.fileSize)} · {formatLastModified(file.lastModified)}
+                      </Typography>
+                    </Box>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Button size="small" onClick={() => reopenFile(file)}>打开</Button>
+                      <Button size="small" color="error" onClick={() => handleDeleteClosedFile(file.id)}>删除</Button>
+                    </Box>
                   </Box>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <Button size="small" onClick={() => reopenFile(file)}>打开</Button>
-                    <Button size="small" color="error" onClick={() => handleDeleteClosedFile(file.id)}>删除</Button>
-                  </Box>
-                </Box>
-              ))}
+                ))}
             </MenuItem>
           </Menu>
           <IconButton
@@ -722,9 +746,9 @@ function App() {
                 borderRadius: '50%',
                 backgroundColor: isSyncing ? '#1976d2' :
                   !giteeConfig ? '#bdbdbd' :
-                    files.some(f => f.isCloudDirty)||closedFiles.some(f => f.isCloudDirty) ? '#ffc107' :
+                    files.some(f => f.isCloudDirty) || closedFiles.some(f => f.isCloudDirty) ? '#ffc107' :
                       syncMessage?.includes('失败') ? '#f44336' :
-                        lastSyncTime && !files.some(f => f.lastModified > new Date(lastSyncTime).getTime())&& !closedFiles.some(f => f.lastModified > new Date(lastSyncTime).getTime()) ? '#4caf50' : '#ffc107',
+                        lastSyncTime && !files.some(f => f.lastModified > new Date(lastSyncTime).getTime()) && !closedFiles.some(f => f.lastModified > new Date(lastSyncTime).getTime()) ? '#4caf50' : '#ffc107',
               }}
             />
           </IconButton>
@@ -754,19 +778,31 @@ function App() {
             <Typography variant="h6" gutterBottom>本地保存设置</Typography>
             <TextField
               margin="dense"
-              label="自动保存间隔（秒）"
+              label="自动保存间隔（秒，0表示关闭）"
               type="number"
               fullWidth
               value={settings.autoSaveInterval}
               onChange={(e) => setSettings({ ...settings, autoSaveInterval: Number(e.target.value) })}
+              size="small"
+              sx={{ mb: 2 }}
             />
           </Box>
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, mt: 1 }}>
             <Box>
-              <Typography variant="subtitle1" gutterBottom>Gitee 配置</Typography>
+              <Typography variant="h6" gutterBottom>Gitee 云端存储</Typography>
+              <TextField
+                margin="dense"
+                label="自动同步间隔（分钟，0表示关闭）"
+                type="number"
+                fullWidth
+                value={settings.autoSyncInterval || 0}
+                onChange={(e) => setSettings({ ...settings, autoSyncInterval: Number(e.target.value) })}
+                size="small"
+                sx={{ mb: 2 }}
+              />
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2 }}>
                 <TextField
-                  label="访问令牌"
+                  label="访问令牌（创建时请确保勾选 projects 权限）"
                   value={giteeFormData.accessToken}
                   onChange={(e) => setGiteeFormData({ ...giteeFormData, accessToken: e.target.value })}
                   fullWidth
@@ -780,9 +816,6 @@ function App() {
                   获取
                 </Button>
               </Box>
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
-                请在Gitee个人访问令牌页面创建新的访问令牌。创建时请确保勾选 projects 权限。
-              </Typography>
               <TextField
                 label="用户名"
                 value={giteeFormData.username}
@@ -814,7 +847,7 @@ function App() {
                 startIcon={isPulling ? <CircularProgress size={20} color="inherit" /> : <PullIcon />}
                 fullWidth
               >
-                从Gitee同步恢复
+                从Gitee恢复
               </Button>
             </Box>
           </Box>
@@ -969,7 +1002,7 @@ function App() {
         aria-describedby="pull-confirm-dialog-description"
       >
         <DialogTitle id="pull-confirm-dialog-title">
-          确认从Gitee同步恢复？
+          确认从Gitee恢复？
         </DialogTitle>
         <DialogContent>
           <Typography id="pull-confirm-dialog-description">
