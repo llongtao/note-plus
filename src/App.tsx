@@ -13,6 +13,7 @@ interface FileTab {
   isCloudDirty: boolean;
   lastModified: number;
   fileSize: number;
+  language: string;
 }
 
 interface GiteeConfig {
@@ -54,8 +55,51 @@ function App() {
   const [pullSnackbarOpen, setPullSnackbarOpen] = useState(false);
   const [lastSyncTime, setLastSyncTime] = useState<string>('');
 
-
-
+  const getLanguageFromFileName = (fileName: string): string => {
+    const extension = fileName.split('.').pop()?.toLowerCase();
+    switch (extension) {
+      case 'js':
+        return 'javascript';
+      case 'ts':
+        return 'typescript';
+      case 'jsx':
+        return 'javascript';
+      case 'tsx':
+        return 'typescript';
+      case 'html':
+        return 'html';
+      case 'css':
+        return 'css';
+      case 'json':
+        return 'json';
+      case 'md':
+        return 'markdown';
+      case 'py':
+        return 'python';
+      case 'java':
+        return 'java';
+      case 'c':
+        return 'c';
+      case 'cpp':
+        return 'cpp';
+      case 'go':
+        return 'go';
+      case 'rs':
+        return 'rust';
+      case 'sql':
+        return 'sql';
+      case 'xml':
+        return 'xml';
+      case 'yaml':
+      case 'yml':
+        return 'yaml';
+      case 'txt':
+      case 'text':
+        return 'plaintext';
+      default:
+        return 'markdown';
+    }
+  };
 
   // 从localStorage加载已关闭的文件
   useEffect(() => {
@@ -557,7 +601,8 @@ function App() {
       isDirty: true,
       fileSize: 0,
       isCloudDirty: true,
-      lastModified: Date.now()
+      lastModified: Date.now(),
+      language: "markdown"
     };
     setFiles([...files, newFile]);
     setActiveTab(newFile.id);
@@ -581,12 +626,12 @@ function App() {
 
   const handleFileNameSave = () => {
     if (editingFileId && editingFileName) {
-      setFiles(files.map(file =>
-        file.id === editingFileId ? { ...file, name: editingFileName } : file
-      ));
-      localStorage.setItem('noteplus_files', JSON.stringify(files.map(file =>
-        file.id === editingFileId ? { ...file, name: editingFileName } : file
-      )));
+      const newLanguage = getLanguageFromFileName(editingFileName);
+      const updatedFiles = files.map(file =>
+        file.id === editingFileId ? { ...file, name: editingFileName, language: newLanguage } : file
+      );
+      setFiles(updatedFiles);
+      localStorage.setItem('noteplus_files', JSON.stringify(updatedFiles));
     }
     setEditingFileId(null);
     setEditingFileName('');
@@ -941,12 +986,13 @@ function App() {
           <Editor
             height="100%"
             width="100%"
-            defaultLanguage="plaintext"
+            defaultLanguage={currentFile?.language || 'markdown'}
+            language={currentFile?.language || 'markdown'}
             value={currentFile?.content || ''}
             onChange={handleEditorChange}
-            onMount={(editor) => {
+            onMount={(e: any) => {
               console.log('编辑器挂载完成');
-              editor.onDidBlurEditorWidget(handleEditorBlur);
+              e.onDidBlurEditorWidget(handleEditorBlur);
             }}
             theme="vs-dark"
             options={{
