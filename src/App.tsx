@@ -695,13 +695,13 @@ function App() {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Note+
           </Typography>
-          <IconButton color="inherit" title="未命名" onClick={createNewFile}>
+          <IconButton color="inherit" title="未命名" onClick={e=>{e.currentTarget.blur(); createNewFile()}}>
             <NoteAddIcon />
           </IconButton>
           <IconButton
             color="inherit"
             title="打开文件"
-            onClick={handleOpenMenuClick}
+            onClick={e=>{e.currentTarget.blur(); handleOpenMenuClick(e)}}
             sx={{ position: 'relative' }}
           >
             <FolderOpenIcon />
@@ -776,7 +776,7 @@ function App() {
           <IconButton
             color="inherit"
             title="同步到Gitee"
-            onClick={handleManualSync}
+            onClick={e=>{e.currentTarget.blur(); handleManualSync()}}
             disabled={!giteeConfig || isSyncing}
             sx={{ position: 'relative' }}
           >
@@ -800,7 +800,8 @@ function App() {
           <IconButton
             color="inherit"
             title="设置"
-            onClick={() => {
+            onClick={(e) => {
+              e.currentTarget.blur(); 
               if (giteeConfig) {
                 setGiteeFormData({
                   accessToken: giteeConfig.accessToken,
@@ -979,7 +980,7 @@ function App() {
           ))}
         </Tabs>
       </Box>
-      <Container disableGutters maxWidth={false} sx={{ height: 'calc(100vh - 112px)', width: '100%', p: 0 }}>
+      <Container disableGutters maxWidth={false} sx={{ height: 'calc(100vh )', width: '100%', p: 0 }}>
         {files.length === 0 ? (
           renderWelcomePage()
         ) : (
