@@ -32,7 +32,7 @@ Online Demo: [http://note.aexp.top/](http://note.aexp.top/)
 
 ```bash
 # Clone the project
-git clone https://github.com/yourusername/note-plus.git
+git clone https://github.com/llongtao/note-plus.git
 
 # Enter project directory
 cd note-plus
