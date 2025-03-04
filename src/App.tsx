@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Box, AppBar, Toolbar, Typography, IconButton, Container, Tabs, Tab, Snackbar, Button, Dialog, DialogTitle, DialogContent, DialogActions, TextField, Menu, MenuItem } from '@mui/material';
-import { Save as SaveIcon, FolderOpen as FolderOpenIcon, NoteAdd as NoteAddIcon, Close as CloseIcon, GitHub as GiteeIcon, CloudUpload as SyncIcon, CloudDownload as PullIcon, Settings as SettingsIcon } from '@mui/icons-material';
+import { Save as SaveIcon, FolderOpen as FolderOpenIcon, NoteAdd as NoteAddIcon, Close as CloseIcon, GitHub as GiteeIcon, CloudUpload as SyncIcon, CloudDownload as PullIcon, Settings as SettingsIcon, Help as HelpIcon, HelpOutline as HelpOutlineIcon, CreateNewFolder as CreateNewFolderIcon, Code as CodeIcon, CloudSync as CloudSyncIcon } from '@mui/icons-material';
 import { CircularProgress } from '@mui/material';
 import axios from 'axios';
 import Editor from '@monaco-editor/react';
@@ -26,6 +26,7 @@ interface Settings {
   autoSaveInterval: number;
   autoSyncInterval: number; // 添加自动同步间隔配置
   giteeConfig: GiteeConfig | null;
+  defaultLanguage: string; // 添加默认语言设置
 }
 
 function App() {
@@ -33,10 +34,12 @@ function App() {
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [giteeConfig, setGiteeConfig] = useState<GiteeConfig | null>(null);
   const [isSettingsDialogOpen, setIsSettingsDialogOpen] = useState(false);
+  const [isHelpDialogOpen, setIsHelpDialogOpen] = useState(false);
   const [settings, setSettings] = useState<Settings>({
     autoSaveInterval: 5,
     autoSyncInterval: 0, // 默认关闭自动同步
-    giteeConfig: null
+    giteeConfig: null,
+    defaultLanguage: 'markdown' // 默认使用markdown
   });
   const [giteeFormData, setGiteeFormData] = useState({
     accessToken: '',
@@ -602,7 +605,7 @@ function App() {
       fileSize: 0,
       isCloudDirty: true,
       lastModified: Date.now(),
-      language: "markdown"
+      language: settings.defaultLanguage||'markdown'
     };
     setFiles([...files, newFile]);
     setActiveTab(newFile.id);
@@ -644,6 +647,14 @@ function App() {
       setEditingFileId(null);
       setEditingFileName('');
     }
+  };
+
+  const handleHelpClick = () => {
+    setIsHelpDialogOpen(true);
+  };
+
+  const handleHelpClose = () => {
+    setIsHelpDialogOpen(false);
   };
 
   const currentFile = files.find(file => file.id === activeTab);
@@ -815,12 +826,44 @@ function App() {
           >
             <SettingsIcon />
           </IconButton>
+          <IconButton
+            color="inherit"
+            title="帮助"
+            onClick={(e) => {
+              e.currentTarget.blur();
+              handleHelpClick();
+            }}
+            sx={{ ml: 1 }}
+          >
+            <HelpIcon />
+          </IconButton>
         </Toolbar>
       </AppBar>
       <Dialog open={isSettingsDialogOpen} onClose={() => setIsSettingsDialogOpen(false)} maxWidth="sm" fullWidth>
         <DialogTitle>设置</DialogTitle>
         <DialogContent>
           <Box sx={{ mt: 2 }}>
+            <Typography variant="h6" gutterBottom>文件设置</Typography>
+            <TextField
+              select
+              margin="dense"
+              label="新建文档默认语言"
+              fullWidth
+              value={settings.defaultLanguage||'markdown'}
+              onChange={(e) => setSettings({ ...settings, defaultLanguage: e.target.value })}
+              size="small"
+              sx={{ mb: 2 }}
+            >
+              <MenuItem value="markdown">Markdown</MenuItem>
+              <MenuItem value="plaintext">Plain Text</MenuItem>
+              <MenuItem value="javascript">JavaScript</MenuItem>
+              <MenuItem value="typescript">TypeScript</MenuItem>
+              <MenuItem value="python">Python</MenuItem>
+              <MenuItem value="java">Java</MenuItem>
+              <MenuItem value="html">HTML</MenuItem>
+              <MenuItem value="css">CSS</MenuItem>
+              <MenuItem value="json">JSON</MenuItem>
+            </TextField>
             <Typography variant="h6" gutterBottom>本地保存设置</Typography>
             <TextField
               margin="dense"
@@ -1061,6 +1104,82 @@ function App() {
           <Button onClick={() => setIsPullConfirmOpen(false)}>取消</Button>
           <Button onClick={executePullFromGitee} color="primary" variant="contained">
             确认恢复
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={isHelpDialogOpen}
+        onClose={handleHelpClose}
+        maxWidth="md"
+        fullWidth
+        PaperProps={{
+          sx: {
+            minHeight: '60vh',
+            maxHeight: '80vh'
+          }
+        }}
+      >
+        <DialogTitle sx={{ borderBottom: '1px solid rgba(0, 0, 0, 0.12)', pb: 2 }}>
+          <Typography variant="h5" component="div" sx={{ display: 'flex', alignItems: 'center' }}>
+            <HelpOutlineIcon sx={{ mr: 1 }} /> Note+ 使用帮助
+          </Typography>
+        </DialogTitle>
+        <DialogContent dividers sx={{ p: 3 }}>
+          <Box sx={{ mb: 4 }}>
+            <Typography variant="h6" gutterBottom sx={{ color: 'primary.main', display: 'flex', alignItems: 'center' }}>
+              <CreateNewFolderIcon sx={{ mr: 1 }} /> 基本功能
+            </Typography>
+            <Typography component="div" sx={{ pl: 4 }}>
+              • <strong>新建文件</strong>：点击左上角的"+"图标<br/>
+              • <strong>保存文件</strong>：系统每5秒自动保存本地（可设置），也可使用快捷键 Ctrl/Cmd + S 手动保存<br/>
+              • <strong>关闭文件</strong>：点击文件标签页上的关闭按钮，会自动收起文件至右上角文件夹<br/>
+              • <strong>重命名文件</strong>：双击文件标签进行重命名<br/>
+              • <strong>恢复文件</strong>：点击右上角文件夹图标，可查看和恢复或删除已关闭的文件
+            </Typography>
+          </Box>
+
+          <Box sx={{ mb: 4 }}>
+            <Typography variant="h6" gutterBottom sx={{ color: 'primary.main', display: 'flex', alignItems: 'center' }}>
+              <CodeIcon sx={{ mr: 1 }} /> 编辑器功能
+            </Typography>
+            <Typography component="div" sx={{ pl: 4 }}>
+              • <strong>语法高亮</strong>：支持多种编程语言，包括 Markdown、JavaScript、Python、Java 等通过文件名后缀识别<br/>
+              • <strong>智能补全</strong>：提供代码自动完成和智能提示功能<br/>
+              • <strong>查找替换</strong>：使用 Ctrl/Cmd + F 搜索和替换<br/>
+              • <strong>更多功能</strong>：按F1或点击鼠标右键选择命令面板
+            </Typography>
+          </Box>
+
+          <Box sx={{ mb: 4 }}>
+            <Typography variant="h6" gutterBottom sx={{ color: 'primary.main', display: 'flex', alignItems: 'center' }}>
+              <CloudSyncIcon sx={{ mr: 1 }} /> 云同步功能
+            </Typography>
+            <Typography component="div" sx={{ pl: 4 }}>
+              • <strong>功能介绍</strong>：可以将文本上传至你的私有Gitee代码库，实现随时随地云端恢复（文件不会存储到我们服务器）<br/>
+              • <strong>手动同步</strong>：点击顶部工具栏的云图标将数据同步到 Gitee<br/>
+              • <strong>自动同步</strong>：在设置中可配置自动同步的时间间隔<br/>
+              • <strong>数据恢复</strong>：点击下载图标可从 Gitee 恢复之前的数据<br/>
+              • <strong>同步状态</strong>：云图标会显示当前文件的同步状态<br/>
+            </Typography>
+          </Box>
+
+          <Box>
+            <Typography variant="h6" gutterBottom sx={{ color: 'primary.main', display: 'flex', alignItems: 'center' }}>
+              <SettingsIcon sx={{ mr: 1 }} /> 设置选项
+            </Typography>
+            <Typography component="div" sx={{ pl: 4 }}>
+              • <strong>自动保存</strong>：可设置自动保存的时间间隔（默认5秒）<br/>
+              • <strong>自动同步</strong>：可选择关闭或设置自动同步的时间间隔<br/>
+              • <strong>默认格式</strong>：设置新建文件的默认文件类型（默认为 Markdown）<br/>
+              • <strong>Gitee 配置</strong>：设置 Gitee 的仓库信息和访问令牌<br/>
+              • <strong>编辑器主题</strong>：可切换浅色/深色主题
+            </Typography>
+          </Box>
+        </DialogContent>
+        <DialogActions sx={{ borderTop: '1px solid rgba(0, 0, 0, 0.12)', p: 2 }}>
+          <Button onClick={handleHelpClose} variant="contained" color="primary">
+            我知道了
           </Button>
         </DialogActions>
       </Dialog>
