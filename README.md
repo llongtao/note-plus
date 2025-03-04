@@ -32,7 +32,7 @@ Note+ 是一个基于 React + TypeScript + Vite 构建的现代化云笔记应�
 
 ```bash
 # 克隆项目
-git clone https://github.com/yourusername/note-plus.git
+git clone https://github.com/llongtao/note-plus.git
 
 # 进入项目目录
 cd note-plus
