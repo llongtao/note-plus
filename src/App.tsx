@@ -516,6 +516,23 @@ function App() {
     console.log("blur")
   }
 
+  // 添加键盘事件处理函数
+  const handleKeyDown = useCallback((event: KeyboardEvent) => {
+    // 检查是否按下了Ctrl/Cmd + S
+    if ((event.ctrlKey || event.metaKey) && event.key === 's') {
+      event.preventDefault(); // 阻止浏览器默认的保存行为
+      saveFiles(); // 触发本地保存
+    }
+  }, [saveFiles]);
+
+  // 添加键盘事件监听
+  useEffect(() => {
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [handleKeyDown]);
+
   // 定时自动保存
   useEffect(() => {
 
